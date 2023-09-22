@@ -1,0 +1,51 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+  <head>
+
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+    <link rel="stylesheet" type="text/css" href="styles.css">
+    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+    <script src="js/chart.js" type="text/javascript" charset="utf-8"></script>
+    <script src="js/common.js" type="text/javascript" charset="utf-8"></script>
+    <script type="text/javascript">
+	google.charts.load('current', {
+		'packages' : [ 'corechart' ]
+	});
+	google.charts.setOnLoadCallback(initChart);
+	google.load("visualization", "1", {packages:["corechart"]});
+</script>
+  </head>
+  <body>
+    <table width="428" height="30">
+      <tbody>
+        <tr>
+          <th>T1</th>
+          <th>T2</th>
+          <th>T3</th>
+          <th>T4</th>
+          <th>Tref</th>
+        </tr>
+        <tr>
+          <td>
+            <div id="T1"></div>
+          </td>
+          <td>
+            <div id="T2"></div>
+          </td>
+          <td>
+            <div id="T3"></div>
+          </td>
+          <td>
+            <div id="T4"></div>
+          </td>
+          <td>
+            <div id="Tref"></div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <div id="temperaturesChart" style="width: 900px; height: 500px"></div>
+    <a href="settings.html">Instellingen</a>
+  </body>
+      
+</html>
