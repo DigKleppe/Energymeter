@@ -23,7 +23,6 @@ char checkstr[MAX_STRLEN+1];
 
 const userSettings_t userSettingsDefaults = {
 	"0.0", 					//spiffsVersion[16]
-	{2,2,2,2},  			//temperatureOffsets
 	{CONFIG_MDNS_HOSTNAME },
 	USERSETTINGS_CHECKSTR };
 
@@ -171,7 +170,50 @@ esp_err_t loadSettings() {
 		ESP_LOGI(TAG, "usersettings loaded");
 	}
 	return err;
-
 }
+
+esp_err_t saveCalibrationSettings(void)
+{
+	FILE *fd = fopen("/spiffs/calsettings", "wb");
+	if (fd == NULL) {
+		ESP_LOGI(TAG,"Error opening file calsettings (%d) %s\n", errno, strerror(errno));
+		return-1;
+	}
+	strcpy (calibrationFactors.checkstr, CALCHECKSTR);
+
+	int len = sizeof (calibrationFactors_t);
+	int res = fwrite( &calibrationFactors, 1, len, fd);
+	if (res != len) {
+		ESP_LOGI(TAG,"Error writing to file %d <> %d\n", res, len);
+		res = fclose(fd);
+		return -1;
+	}
+	res = fclose(fd);
+	return 0;
+}
+
+esp_err_t loadCalibrationSettings(){
+	esp_err_t res = 0;
+	FILE *fd = fopen("/spiffs/calsettings", "rb");
+	if (fd == NULL) {
+		ESP_LOGI(TAG,"Error opening calsettings file (%d) %s\n", errno, strerror(errno));
+	}
+	else {
+		int len = sizeof (calibrationFactors_t);
+		res = fread( &calibrationFactors, 1, len, fd);
+		if (res <= 0) {
+			ESP_LOGI(TAG,"  Error reading from file\n");
+		}
+		res = fclose(fd);
+	}
+	if (strcmp(calibrationFactors.checkstr, CALCHECKSTR) != 0 ){
+		calibrationFactors  = defaultCalibrationFactors;
+		ESP_LOGI(TAG," ** default calibration loaded");
+		saveCalibrationSettings();
+	}
+	return res;
+}
+
+
 }
 

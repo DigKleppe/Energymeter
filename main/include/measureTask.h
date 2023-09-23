@@ -1,17 +1,17 @@
 /*
  * measureTask.h
  *
- *  Created on: Aug 9, 2021
+ *  Created on: Sept 22, 2023
  *      Author: dig
  */
 
 #ifndef MAIN_INCLUDE_MEASURETASK_H_
 #define MAIN_INCLUDE_MEASURETASK_H_
 
+#include <stdint.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-#define NR_NTCS			4
 
 #include "cgiScripts.h"
 #include "settings.h"
@@ -21,53 +21,68 @@
 #define REFAVERAGES		32
 #define MAXSTRLEN		16
 
-#define RREF			9975			// in ohms
-#define CAP_PIN			GPIO_NUM_16
-#define RREF_PIN		GPIO_NUM_21
-#define NTC1_PIN		GPIO_NUM_26
-#define NTC2_PIN		GPIO_NUM_27
-#define NTC3_PIN		GPIO_NUM_17
-#define NTC4_PIN		GPIO_NUM_18
-
-
 #define MEASINTERVAL			 	5  //interval for sensor in seconds
 #define LOGINTERVAL					5   //minutes
 #define AVGERAGESAMPLES				((LOGINTERVAL * 60)/(MEASINTERVAL))
 
 #define MAXLOGVALUES				((24*60)/LOGINTERVAL)
-
-
 #define NOCAL 						99999
-
-void measureTask(void *pvParameters);
-
-//extern float temperature[NR_NTCS];
-extern  float refTemperature;
-extern bool sensorDataIsSend;
-
-extern SemaphoreHandle_t measureSemaphore; // to prevent from small influences on IRQ
+#define CALCHECKSTR 				"CalTest1"
 
 typedef struct {
-	float temperature[NR_NTCS];
-} calValues_t;
-
-typedef struct {
-	int32_t timeStamp;
-	float temperature[NR_NTCS];
-	float refTemperature;
-} log_t;
-
-extern log_t tLog[ MAXLOGVALUES];
-
-typedef struct {
-	char averegedValue[MAXSTRLEN+1];
-	char momentaryValue[MAXSTRLEN+1];
-
+	float activePower;
+	float apparentPower;
+	float totalEnergy;
+	float vRMS;
+	float iRMS;
+	float mainsFrequency;
+	float maxWatts;
+	float minWatts;
+	uint32_t runTime;
 } measValues_t;
 
 extern measValues_t measValues;
 
+typedef struct {
+	float activePowerCalFact;
+	float activePowerOffset;
+	float apparentPowerCalFact;
+	float apparentPowerOffset;
+	float vRMScalFact;
+	float vRMSoffset;
+	float iRMScalFact;
+	float iRMSoffset;
+	float calVoltage;
+	float calAmps;
+	char checkstr[32+1];
+}calibrationValues_t;
 
+
+typedef struct {
+	char name[20];
+	float * rawValue;
+	float * offset;
+	float * calValue;
+}info_t;
+
+extern calibrationFactors_t calibrationFactors;
+extern calibrationFactors_t defaultCalibrationFactors;
+extern bool sensorDataIsSend;
+
+typedef struct {
+	int32_t timeStamp;
+	float momPower;
+	float voltage;
+	float current;
+	float frequency;
+} log_t;
+
+extern log_t tLog[ MAXLOGVALUES];
+
+typedef enum calType_t {CALTYPE_OFFSET, CALTYPE_GAIN };
+
+bool parseCalInfo (char *pcParam, const info_t * infoTable , calType_t calType);
+void measureTask(void *pvParameters);
 int getRTMeasValuesScript(char *pBuffer, int count) ;
 int getNewMeasValuesScript(char *pBuffer, int count);
 int getLogScript(char *pBuffer, int count);
@@ -79,7 +94,8 @@ int calibrateRespScript(char *pBuffer, int count);
 int getSensorNameScript (char *pBuffer, int count);
 void parseCGIWriteData(char *buf, int received);
 
-
+int resetTotalEnergyScript(char *pBuffer, int count);
+int resetRunTimeScript(char *pBuffer, int count);
 
 
 #endif /* MAIN_INCLUDE_MEASURETASK_H_ */

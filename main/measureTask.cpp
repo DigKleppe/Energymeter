@@ -24,71 +24,109 @@
 #include "averager.h"
 #include "main.h"
 #include "measureTask.h"
+#include "ADE7763.h"
 
 static const char *TAG = "measureTask";
 
-extern int scriptState;
+Averager voltageAvgr(60);
+Averager currentAvgr(60);
+Averager energyAvgr(60);
 
-//static xQueueHandle gpio_evt_queue = NULL;
-
-bool sensorDataIsSend;
+volatile bool newCalValueReceived;
 
 measValues_t measValues;
+calibrationValues_t calibrationValues;
+
+// @formatter:off
+calibrationValues_t defaultcalibrationValues = { 0.125845268, 0.148263872, 0.00015940021, 5.96884956e-06, 0, 0, { CALCHECKSTR } };
+
+//float activePower;
+//float apparentPower;
+//float totalEnergy;
+//float vRMS;
+//float iRMS;
+//float mainsFrequency;
+//float maxWatts;
+//float minWatts;
+//uint32_t runTime;
+//
+//float activePowerCalFactr;
+//float activePowerOffset;
+//float apparentPowerCalFact;
+//float apparentPowerOffset;
+//float vRMScalFact;
+//float iRMScalFact;
+//float iRMSOffset;
+//float calVoltage;
+//float calAmps;
+
+// used for calibration
+info_t calInfoTable[] = {
+	{"activePower", &measValues.activePower, &calibrationValues.activePowerOffset ,&calibrationValues.activePowerCalFact },
+	{"apparentPower", &measValues.apparentPower, &calibrationValues.apparentPowerOffset ,&calibrationValues.apparentPowerCalFact },
+	{"vRMS", &measValues.vRMS, &calibrationValues.vRMSoffset ,&calibrationValues.vRMScalFact },
+	{"iRMS", &measValues.iRMS, &calibrationValues.iRMSoffset ,&calibrationValues.iRMScalFact },
+	{NULL,NULL,NULL,NULL}
+};
+
+// @formatter:on
+
+#define CLCLESTIMEOUT			1200	// mseconds for ADE to measure cycles (set to 100)
+#define UDPTXPORT				5001
+
+extern int scriptState;
+bool sensorDataIsSend;
 log_t tLog[ MAXLOGVALUES];
 
 int logTxIdx;
 int logRxIdx;
 
-Averager refAverager(REFAVERAGES);  // for reference resistor
-Averager ntcAverager[NR_NTCS];
-Averager refSensorAverager (AVGERAGESAMPLES);
-
 uint8_t err;
 
 uint32_t timeStamp = 1;
 
-void testLog(void) {
-	int len;
-	char buf[50];
-//	logTxIdx = 0;
-	for (int p = 0; p < 20; p++) {
-
-		tLog[logTxIdx].timeStamp = timeStamp++;
-		for (int n = 0; n < NR_NTCS; n++) {
-
-			tLog[logTxIdx].temperature[n] = p + n;
-		}
-		tLog[logTxIdx].refTemperature = tmpTemperature; // from I2C TMP117
-		logTxIdx++;
-		if (logTxIdx >= MAXLOGVALUES )
-			logTxIdx = 0;
-	}
-	scriptState = 0;
-	do {
-		len = getLogScript(buf, 50);
-		buf[len] = 0;
-		printf("%s\r",buf);
-	} while (len);
-
-	for (int p = 0; p < 5; p++) {
-
-		tLog[logTxIdx].timeStamp = timeStamp++;
-		for (int n = 0; n < NR_NTCS; n++) {
-
-			tLog[logTxIdx].temperature[n] = p + n;
-		}
-		tLog[logTxIdx].refTemperature = tmpTemperature; // from I2C TMP117
-		logTxIdx++;
-		if (logTxIdx >= MAXLOGVALUES )
-			logTxIdx = 0;
-	}
-	do {
-		len = getNewMeasValuesScript(buf, 50);
-		buf[len] = 0;
-		printf("%s\r",buf);
-	} while (len);
-	printf("\r\n *************\r\n");
-}
+//void testLog(void) {
+//	int len;
+//	char buf[50];
+////	logTxIdx = 0;
+//	for (int p = 0; p < 20; p++) {
+//
+//		tLog[logTxIdx].timeStamp = timeStamp++;
+//		for (int n = 0; n < NR_NTCS; n++) {
+//
+//			tLog[logTxIdx].temperature[n] = p + n;
+//		}
+//		tLog[logTxIdx].refTemperature = tmpTemperature; // from I2C TMP117
+//		logTxIdx++;
+//		if (logTxIdx >= MAXLOGVALUES )
+//			logTxIdx = 0;
+//	}
+//	scriptState = 0;
+//	do {
+//		len = getLogScript(buf, 50);
+//		buf[len] = 0;
+//		printf("%s\r",buf);
+//	} while (len);
+//
+//	for (int p = 0; p < 5; p++) {
+//
+//		tLog[logTxIdx].timeStamp = timeStamp++;
+//		for (int n = 0; n < NR_NTCS; n++) {
+//
+//			tLog[logTxIdx].temperature[n] = p + n;
+//		}
+//		tLog[logTxIdx].refTemperature = tmpTemperature; // from I2C TMP117
+//		logTxIdx++;
+//		if (logTxIdx >= MAXLOGVALUES )
+//			logTxIdx = 0;
+//	}
+//	do {
+//		len = getNewMeasValuesScript(buf, 50);
+//		buf[len] = 0;
+//		printf("%s\r",buf);
+//	} while (len);
+//	printf("\r\n *************\r\n");
+//}
 
 int secToTime(int seconds, char *dest) {
 	int len = 0;
@@ -104,6 +142,41 @@ int secToTime(int seconds, char *dest) {
 	len += sprintf(dest + len, ":%02d", minutes);
 	len += sprintf(dest + len, ":%02d", seconds);
 	return len;
+}
+
+// receives every second new measValues
+// log is written every minute
+
+void addToLog(measValues_t values) {
+	static bool minutePassed = false;
+	time_t now;
+	struct tm timeinfo;
+
+	energyAvgr.write(256 * values.activePower);
+	voltageAvgr.write(256 * values.vRMS);
+	currentAvgr.write(256 * values.iRMS);
+
+	time(&now);
+	localtime_r(&now, &timeinfo);
+#ifdef FAST
+	if(1){
+		minutePassed = false;
+#else
+	if (timeinfo.tm_sec < 10) {
+#endif
+		if (!minutePassed) {
+			minutePassed = true;
+			tLog[logTxIdx].timeStamp = timeStamp++;
+			tLog[logTxIdx].momPower = energyAvgr.average() / 256.0;
+			tLog[logTxIdx].voltage = voltageAvgr.average() / 256.0;
+			tLog[logTxIdx].current = currentAvgr.average() / 256.0;
+			tLog[logTxIdx].frequency = values.mainsFrequency;
+			logTxIdx++;
+			if (logTxIdx >= MAXLOGVALUES)
+				logTxIdx = 0;
+		}
+	} else
+		minutePassed = false;
 }
 
 void measureTask(void *pvParameters) {
@@ -128,17 +201,17 @@ void measureTask(void *pvParameters) {
 	do {
 		measValues.runTime++;
 		ADE_sampleRMS(&tempvRMS, &tempiRMS);
-		measValues.vRMS = tempvRMS * calibrationFactors.vRMScalFact;
-		measValues.iRMS = tempiRMS * calibrationFactors.iRMScalFact;
+		measValues.vRMS = tempvRMS * calibrationValues.vRMScalFact;
+		measValues.iRMS = tempiRMS * calibrationValues.iRMScalFact;
 		measValues.mainsFrequency = ADEreadFrequency();
 
 		if (ADE_measureCycles (CLCLESTIMEOUT)) {	// wait until all mainsCycles are sampled
 			tempActivePwr = ADE_readActivePower(); // must be the same as VArms at pf = 1
-			measValues.activePower = tempActivePwr * calibrationFactors.activePowerCalFactr;
+			measValues.activePower = tempActivePwr * calibrationValues.activePowerCalFactr;
 			measValues.totalEnergy += measValues.activePower / (3600.0 * 1000.0); // kwH
 
 			tempApparentPwr = ADE_readApparentPower(); // must be the same as VArms at pf = 1
-			measValues.apparentPower = tempApparentPwr * calibrationFactors.apparentPowerCalFact;
+			measValues.apparentPower = tempApparentPwr * calibrationValues.apparentPowerCalFact;
 
 			if (logDelay)
 				logDelay--;
@@ -147,15 +220,15 @@ void measureTask(void *pvParameters) {
 
 			if (newCalValueReceived) {
 				newCalValueReceived = false;
-				if (calibrationFactors.calVoltage != 0) {
-					calibrationFactors.vRMScalFact = calibrationFactors.calVoltage / tempvRMS;
+				if (calibrationValues.calVoltage != 0) {
+					calibrationValues.vRMScalFact = calibrationValues.calVoltage / tempvRMS;
 				}
-				if (calibrationFactors.calAmps != 0) {
-					calibrationFactors.iRMScalFact = calibrationFactors.calAmps / tempiRMS;
+				if (calibrationValues.calAmps != 0) {
+					calibrationValues.iRMScalFact = calibrationValues.calAmps / tempiRMS;
 				}
-				actWatts = (float) tempvRMS * (float) (float) tempiRMS * calibrationFactors.vRMScalFact * calibrationFactors.iRMScalFact;
-				calibrationFactors.activePowerCalFactr = actWatts / (float) tempActivePwr;
-				calibrationFactors.apparentPowerCalFact = actWatts / (float) tempApparentPwr;
+				actWatts = (float) tempvRMS * (float) (float) tempiRMS * calibrationValues.vRMScalFact * calibrationValues.iRMScalFact;
+				calibrationValues.activePowerCalFactr = actWatts / (float) tempActivePwr;
+				calibrationValues.apparentPowerCalFact = actWatts / (float) tempApparentPwr;
 				saveCalibrationSettings();
 			}
 
@@ -189,10 +262,46 @@ void measureTask(void *pvParameters) {
 	} while (1);
 }
 
-
-
 // called from CGI
 
+// parses string , returns pointer to item infotable if found
+
+info_t * parseCalInfo (char *pcParam, const info_t * infoTable , float * pVvalue) {
+	int n, m, len;
+	int idx  = -1;
+	bool success = false;
+
+	char *p = pcParam; // var=1.23&var2=4.56.	<tr>
+
+	if (pcParam == NULL)
+		return false;
+
+	char name[20];
+
+	success = false;
+	len = strlen(p);
+	for (n = 0; (n < len) && !success; n++) {
+		if (p[n] == '=') {
+			strncpy(name, p, n);
+			name[n] = 0;
+			do {
+				idx++;
+				if (strcmp(name, infoTable->name) == 0) { // found
+					if (p[n + 1] != '&') { // empty value
+						sscanf(&p[n + 1], "%f", pValue); // read value
+					}
+					success = true;
+				}
+				else
+					infoTable++;
+			} while (!success && infoTable->name);
+		}
+	}
+	if ( success)
+		return infoTable;
+	else
+		return NULL; // not found
+}
 
 int getSensorNameScript(char *pBuffer, int count) {
 	int len = 0;
@@ -212,15 +321,15 @@ int getSensorNameScript(char *pBuffer, int count) {
 int getInfoValuesScript(char *pBuffer, int count) {
 	int len = 0;
 	char str[10];
+	info_t *pInfo = infoTable;
 	switch (scriptState) {
 	case 0:
 		scriptState++;
-		len += sprintf(pBuffer + len, "%s\n", "Meting,Actueel,Offset");
-		for ( int n =0; n < NR_NTCS;n++) {
-			sprintf (str, "Sensor %d", n+1);
-			len += sprintf(pBuffer + len, "%s,%3.2f,%3.2f\n", str, lastTemperature[n]-userSettings.temperatureOffset[n], userSettings.temperatureOffset[n]); // send values and offset
-		}
-		len += sprintf(pBuffer + len, "Referentie,%3.2f,0\n", refSensorAverager.average()/1000.0);
+		len += sprintf(pBuffer + len, "%s\n", "Meting,Actueel,Offset,Gain");
+		do {
+			len += sprintf(pBuffer + len, "%s,%3.2f,%3.2f,%3.2f\n", pInfo->name, pInfo->rawValue , pInfo->offset, pInfo->calValue);
+			pInfo++;
+		} while (pInfo->name);
 		return len;
 		break;
 	default:
@@ -236,8 +345,12 @@ int getCalValuesScript(char *pBuffer, int count) {
 	switch (scriptState) {
 	case 0:
 		scriptState++;
-		len += sprintf(pBuffer + len, "%s\n", "Meting,Referentie,Stel in,Herstel");
-		len += sprintf(pBuffer + len, "%s\n", "Sensor 1\n Sensor 2\n Sensor 3\n Sensor 4\n");
+		len += sprintf(pBuffer + len, "%s\n", "Meting,Referentie,Offset, Gain");
+		do {
+			len += sprintf(pBuffer + len, "%s\n", pInfo->name);
+			pInfo++;
+		} while (pInfo->name);
+
 		return len;
 		break;
 	default:
@@ -257,16 +370,10 @@ int cancelSettingsScript(char *pBuffer, int count) {
 }
 
 
-calValues_t calValues = { NOCAL, NOCAL, NOCAL };
 // @formatter:off
 char tempName[MAX_STRLEN];
 
-const CGIdesc_t writeVarDescriptors[] = {
-		{ "Temperatuur", &calValues.temperature, FLT, NR_NTCS },
-		{ "moduleName",tempName, STR, 1 }
-};
 
-#define NR_CALDESCRIPTORS (sizeof (writeVarDescriptors)/ sizeof (CGIdesc_t))
 // @formatter:on
 
 int getRTMeasValuesScript(char *pBuffer, int count) {
@@ -381,6 +488,18 @@ int getLogScript(char *pBuffer, int count) {
 		}
 	}
 	return len;
+}
+
+
+int resetTotalEnergyScript(char *pBuffer, int count) {
+	measValues.totalEnergy = 0;
+	measValues.runTime = 0;
+	return 0;
+}
+
+int resetRunTimeScript(char *pBuffer, int count) {
+	measValues.runTime = 0;
+	return 0;
 }
 
 

@@ -16,14 +16,11 @@
 #include "cgiScripts.h"
 #include "measureTask.h"
 
-
 #define MAX_STRLEN				 32
-#define USERSETTINGS_CHECKSTR 	"ttest-1"
-
+#define USERSETTINGS_CHECKSTR 	"test-1"
 
 typedef struct {
 	char spiffsVersion[16]; // holding current version
-	float temperatureOffset[NR_NTCS];
 	char moduleName[MAX_STRLEN+1];
 	char checkstr[MAX_STRLEN+1];
 }userSettings_t;
@@ -45,6 +42,8 @@ extern "C" {
 #endif
 	esp_err_t saveSettings( void);
 	esp_err_t loadSettings( void);
+	esp_err_t saveCalibrationSettings(void);
+	esp_err_t loadCalibrationSettings(void);
 
 #ifdef __cplusplus
 }
